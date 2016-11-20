@@ -53,10 +53,11 @@ static const char rcsid[] =
 #include "classifier.h"
 #include "ip.h"
 #include "random.h"
+#include <map>
 
 class MultiPathForwarder : public Classifier {
 public:
-  MultiPathForwarder() : ns_(0), nodeid_(0), nodetype_(0), perflow_(0), checkpathid_(0), partialFailure_(0), failedToR_(144), failureRatio_(1), smartSpraying_(0) {
+  MultiPathForwarder() : ns_(0), nodeid_(0), nodetype_(0), perflow_(0), checkpathid_(0), partialFailure_(0), failedToR_(144), failureRatio_(1), smartSpraying_(0), smartHashingPath(0), flowcell_(0), flowcellSize_(0) {
     bind("nodeid_", &nodeid_);
     bind("nodetype_", &nodetype_);
     bind("perflow_", &perflow_);
@@ -67,9 +68,19 @@ public:
     bind("failedToR_", &failedToR_);
     bind("failureRatio_", &failureRatio_);
     bind("smartSpraying_", &smartSpraying_);
+
+    bind("flowcell_", &flowcell_);
+    bind("flowcellSize_", &flowcellSize_);
   }
+
+  ~MultiPathForwarder() {
+    flows.clear();
+  }
+
   virtual int classify(Packet* p) {
     int cl;
+
+    hdr_cmn *ch = HDR_CMN(p); // added Nov 17, 2017
     hdr_ip* h = hdr_ip::access(p);
     // Mohammad: multipath support
     // fprintf(stdout, "perflow_ = %d, rcv packet in classifier\n", perflow_);
@@ -115,6 +126,24 @@ public:
 	    //printf("%d: %d->%d\n", nodetype_, h->prio(), pathDig);
 	    ms_ += h->prio(); //pathDig;
 	  }
+	
+	if(smartSpraying_) {
+	  // we want smart ECMP, wherein we will try to give each new high priority flow a different new path...
+	  //if(h->prio() <= 1) {
+	  if(h->prio() > 5) {
+	    
+	    if(flows.find(h->flowid()) == flows.end()) {
+	      // this is a new flow, make the decision for the new flow
+	      smartHashingPath = smartHashingPath % (maxslot_ + 1);
+	      ms_ = smartHashingPath++;
+	      flows[h->flowid()] = ms_;
+	    } else {
+	      // if this flow already exists, just follow the already chosen path
+	      ms_ = flows[h->flowid()];
+	    }
+	  }
+	}
+
 	ms_ %= (maxslot_ + 1);
 	//printf("nodeid = %d, pri = %d, ms = %d\n", nodeid_, buf_.prio, ms_);
 	int fail = ms_;
@@ -130,19 +159,65 @@ public:
 	//cl = h->prio() % (maxslot_ + 1);
 	//}
 	//else {
-	int fail = ns_;
-	do {
-	  cl = ns_++;
 
-	  if(partialFailure_ && smartSpraying_ && nodeid_==failedToR_ && cl==0 && (Scheduler::instance().clock() >= 1.01)) {
-	    if(h->prio() <= 1 || (Random::integer(failureRatio_) > 0)) { // if pkt from highest 2 prio queues or randomly chosen 9/10, we shift to next link
-		cl = ns_++; // choose the next link
+	if(flowcell_) {
+	  unsigned int ms_;
+	  // if this is a new flow, create a new entry in the flows
+	    if(flows.find(h->flowid()) == flows.end()) {	      
+	      // this is a new flow, make the decision for the new flow
+	      ms_ = Random::integer(maxslot_ + 1);
+
+	      if(partialFailure_ && nodeid_==failedToR_ && ms_==0 && (Scheduler::instance().clock() >= 1.01)) {
+		// TODO if flag indicates this is priority aware WFCS, add some more logic to it.... :)
+		if((smartSpraying_ && h->prio() <= 1) || (Random::integer(failureRatio_) > 0)) {
+		  ms_++; // move to the next link
+		}	
+	      }
+	      flows[h->flowid()] = ms_;
+	    } else {
+	      // if this flow already exists, just follow the already chosen path
+	      if(ch->uid() % flowcellSize_ == 0) {
+		flows[h->flowid()] = (flows[h->flowid()] + 1) % (maxslot_ + 1);
+		if(partialFailure_ && nodeid_==failedToR_ && flows[h->flowid()]==0 && (Scheduler::instance().clock() >= 1.01)) {
+		  // TODO if flag indicates this is priority aware WFCS, add some more logic to it.... :)
+		  if((smartSpraying_ && h->prio() <= 1) || (Random::integer(failureRatio_) > 0)) {
+		    flows[h->flowid()] = (flows[h->flowid()] + 1) % (maxslot_ + 1); // move to the next link
+		  }
+		}
+	      }	      
+	      ms_ = flows[h->flowid()];	      
 	    }
-	  }    
 
-	  ns_ %= (maxslot_ + 1);
+	    /*if(partialFailure_ && nodeid_==failedToR_ && ms_==0 && (Scheduler::instance().clock() >= 1.01)) {
+	      // if simple weighted flowcell spraying, apply probabilistic approach using weights
+	      if((Random::integer(failureRatio_) > 0)) {
+		flows[h->flowid()] = ++ms_; // move to the next link
+	      }
 
-	} while (slot_[cl] == 0 && ns_ != fail);
+	    }*/
+
+	    int fail = ms_;
+	    do {
+	      cl = ms_++;
+	      ms_ %= (maxslot_ + 1);
+	    } while (slot_[cl] == 0 && ms_ != fail);
+
+	} else {
+
+	  int fail = ns_;
+	  do {
+	    cl = ns_++;
+
+	    if(partialFailure_ && smartSpraying_ && nodeid_==failedToR_ && cl==0 && (Scheduler::instance().clock() >= 1.01)) {
+	      if(h->prio() <= 1 || (Random::integer(failureRatio_) > 0)) { // if pkt from highest 2 prio queues or randomly chosen 9/10, we shift to next link
+		cl = ns_++; // choose the next link
+	      }
+	    }    
+
+	    ns_ %= (maxslot_ + 1);
+
+	  } while (slot_[cl] == 0 && ns_ != fail);
+	}
       }
 
 
@@ -161,6 +236,10 @@ private:
   int failedToR_;
   int failureRatio_;
   int smartSpraying_;
+  std::map<int,int> flows; 
+  int smartHashingPath;
+  int flowcell_;
+  int flowcellSize_;
 
 	static unsigned int
 	HashString(register const char *bytes,int length)
