@@ -18,7 +18,11 @@ q = Queue.Queue()
 partial_failure = 1
 failed_tor = 0
 failure_ratio = 10
+# Smart Spraying means smart spraying for PS, and smart hashing for ECMP
 smart_spraying = 1
+
+flow_cell = 1
+flowcell_size = 43
 
 #sim_end = 100000
 sim_end = 10000
@@ -27,7 +31,8 @@ mean_link_delay = 0.0000002
 host_delay = 0.000020
 queueSize = 240
 #load_arr = [0.9, 0.8, 0.7, 0.6, 0.5]
-load_arr = [0.8]
+#load_arr = [0.6, 0.8]
+load_arr = [0.6, 0.8, 0.9]
 connections_per_pair = 1
 meanFlowSize = 1138*1460
 paretoShape = 1.05
@@ -136,6 +141,8 @@ for prio_num_ in prio_num_arr:
 			+str(failed_tor)+' '\
 			+str(failure_ratio)+' '\
 			+str(smart_spraying)+' '\
+			+str(flow_cell)+' '\
+			+str(flowcell_size)+' '\
 			+str('./'+directory_name+'/flow.tr')+'  >'\
 			+str('./'+directory_name+'/logFile.tr')
 

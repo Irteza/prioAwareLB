@@ -4,7 +4,7 @@ set ns [new Simulator]
 puts "Date: [clock format [clock seconds]]"
 set sim_start [clock seconds]
 
-if {$argc != 43} {
+if {$argc != 45} {
     puts "wrong number of arguments $argc"
     exit 0
 }
@@ -62,8 +62,11 @@ set failed_tor [lindex $argv 39]
 set failure_ratio [lindex $argv 40]
 set smart_spraying [lindex $argv 41]
 
+set flow_cell [lindex $argv 42]
+set flowcell_size [lindex $argv 43]
+
 ### result file
-set flowlog [open [lindex $argv 42] w]
+set flowlog [open [lindex $argv 44] w]
 
 #### Packet size is in bytes.
 set pktSize 1460
@@ -215,6 +218,9 @@ if {$enableMultiPath == 1} {
     Classifier/MultiPath set failedToR_ [expr $failed_tor + ($topology_spt*$topology_tors)]
     Classifier/MultiPath set failureRatio_ $failure_ratio
     Classifier/MultiPath set smartSpraying_ $smart_spraying
+
+    Classifier/MultiPath set flowcell_ $flow_cell
+    Classifier/MultiPath set flowcellSize_ $flowcell_size
 }
 
 ############# Topoplgy #########################
